@@ -65,6 +65,85 @@ function printHelp() {
 }
 if (process.argv.includes('--help') || process.argv.includes('-h')) printHelp();
 
+// ★自检（2026-10-24 加）：验证 AST 变异器 + 分类函数
+if (process.argv.includes('--selftest')) {
+  const { buildCandidates } = require('./ast-mutator.cjs');
+  let pass = 0, fail = 0;
+  const t = (name, fn) => {
+    try { fn(); console.log('  ✅ ' + name); pass++; }
+    catch (e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+  };
+  const eq = (a, b, m) => { if (a !== b) throw new Error((m || '') + ' 期望 ' + JSON.stringify(b) + ' 实得 ' + JSON.stringify(a)); };
+
+  console.log('═══ ai-test-check 自检 ═══');
+  console.log('');
+
+  t('AST：真运算符能找到', () => {
+    // ★注意：18 也会被数字变异 ⇒ 实际 4 个（>= / && / !== / 数字边界）
+    const r = buildCandidates('t.js', 'if (a >= 18 && b !== 0) {}');
+    eq(r.candidates.length, 4, '应有 4 个（>= && !== + 数字18）');
+    const kinds = r.candidates.map(x => x.kind);
+    if (!kinds.some(k => k.includes('>='))) throw new Error('缺 >=');
+    if (!kinds.some(k => k.includes('&&'))) throw new Error('缺 &&');
+    if (!kinds.some(k => k.includes('!=='))) throw new Error('缺 !==');
+    if (!kinds.some(k => k.includes('数字'))) throw new Error('缺数字边界');
+  });
+
+  t('AST：正则里的符号不算', () => {
+    const r = buildCandidates('t.js', 'const re = /(?<![<>=!])>=(?!=)/g;');
+    eq(r.candidates.length, 0);
+  });
+
+  t('AST：字符串里的符号不算', () => {
+    const r = buildCandidates('t.js', 'const s = "a >= b && c !== d";');
+    eq(r.candidates.length, 0);
+  });
+
+  t('AST：布尔字面量能变异', () => {
+    const r = buildCandidates('t.js', 'function f() { return true; }');
+    const bools = r.candidates.filter(x => x.kind.includes('true'));
+    eq(bools.length, 1);
+  });
+
+  t('AST：数字边界能变异', () => {
+    const r = buildCandidates('t.js', 'function f(a) { return a >= 18; }');
+    const nums = r.candidates.filter(x => x.kind.includes('数字'));
+    eq(nums.length, 1, '18 应该被变异');
+  });
+
+  t('AST：状态字符串能变异', () => {
+    const r = buildCandidates('t.js', 'function f(s) { return s === "active"; }');
+    const strs = r.candidates.filter(x => x.kind.includes('状态'));
+    eq(strs.length, 1);
+  });
+
+  t('AST：语法错误要报错不崩', () => {
+    const r = buildCandidates('t.js', 'function f( {');
+    if (!r.parseError) throw new Error('该报解析错误');
+  });
+
+  t('AST：0 和 1 不参与数字变异（避免噪音）', () => {
+    const r = buildCandidates('t.js', 'const a = 0; const b = 1;');
+    const nums = r.candidates.filter(x => x.kind.includes('数字'));
+    eq(nums.length, 0);
+  });
+
+  t('分类：边界条件识别', () => {
+    const r = buildCandidates('t.js', 'if (a >= 18) {}');
+    const kinds = r.candidates.map(x => x.kind);
+    if (!kinds.some(k => k.includes('>='))) throw new Error('该有 >= 变异');
+  });
+
+  t('分类：逻辑组合识别', () => {
+    const r = buildCandidates('t.js', 'if (a && b) {}');
+    if (!r.candidates.some(x => x.kind.includes('&&'))) throw new Error('该有 && 变异');
+  });
+
+  console.log('');
+  console.log('  通过: ' + pass + ' / ' + (pass + fail));
+  process.exit(fail === 0 ? 0 : 1);
+}
+
 // ★修（2026-10-24）：取第一个非 -- 开头的参数作为目录
 //   原 bug：TARGET = process.argv[2]，写成 `ai-test-check --max=5 ./src` 时会取到 --max=5
 const TARGET = process.argv.slice(2).find((a) => !a.startsWith('--'));
