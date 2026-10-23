@@ -241,7 +241,9 @@ if (!fs.existsSync(ROOT)) {
 }
 
 function findTestCommand() {
-  if (TEST_CMD) return TEST_CMD;
+  // ★修（2026-10-24）：返回对象，不是字符串
+  //   原 bug：--test-cmd="node test.js" ⇒ testCmd = undefined
+  if (TEST_CMD) return { cmd: TEST_CMD, cwd: ROOT };
 
   // ★修（2026-10-24）：从 ROOT 向上找 package.json，最多 5 级
   //   原 bug：用户传 ./src，但 package.json 在项目根 ⇒ 找不到测试命令
@@ -325,11 +327,25 @@ console.log('');
 // ★修（2026-10-24）：排除测试文件本身
 //   原 bug：只排除 .test./.spec.，但 demo 的测试文件叫 test.js ⇒ 变异了测试自己
 //   修法：排除 test.js / tests.js / test/ / tests/ / __tests__/
+// ★修（2026-10-24）：从 --test-cmd 提取测试文件名，排除它
+const testFilePatterns = [];
+if (TEST_CMD) {
+  // 从 "node test-fixed.js" 提取 "test-fixed.js"
+  const m = TEST_CMD.match(/([\w\-.]+\.(c|m)?js)/);
+  if (m) testFilePatterns.push(m[1]);
+}
+
 const srcFiles = findFiles(ROOT, /\.(c|m)?js$/).filter((f) => {
   const rel = path.relative(ROOT, f).replace(/\\/g, '/');
   if (/\.test\.|\.spec\./.test(rel)) return false;
   if (/^(test|tests|__tests__)\//.test(rel)) return false;
   if (/^(test|tests)\.(c|m)?js$/.test(rel)) return false;
+  // ★排除 --test-cmd 指定的测试文件
+  if (testFilePatterns.some((p) => rel === p || rel.endsWith('/' + p))) return false;
+  // ★排除 test-*.js / *-test.js / *-spec.js
+  if (/^test-[\w-]+\.(c|m)?js$/.test(rel)) return false;
+  if (/^[\w-]+-test\.(c|m)?js$/.test(rel)) return false;
+  if (/^[\w-]+-spec\.(c|m)?js$/.test(rel)) return false;
   return true;
 });
 
