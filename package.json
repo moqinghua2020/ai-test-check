@@ -1,6 +1,6 @@
 {
   "name": "ai-test-check",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Prove your tests are real. AST-based mutation testing for the AI-coding era.",
   "keywords": [
     "mutation-testing",
