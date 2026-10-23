@@ -65,8 +65,10 @@ function printHelp() {
 }
 if (process.argv.includes('--help') || process.argv.includes('-h')) printHelp();
 
-const TARGET = process.argv[2];
-if (!TARGET || TARGET.startsWith('--')) {
+// ★修（2026-10-24）：取第一个非 -- 开头的参数作为目录
+//   原 bug：TARGET = process.argv[2]，写成 `ai-test-check --max=5 ./src` 时会取到 --max=5
+const TARGET = process.argv.slice(2).find((a) => !a.startsWith('--'));
+if (!TARGET) {
   console.error('❌ 缺少目录参数（用 --help 看用法）');
   process.exit(2);
 }
@@ -96,16 +98,29 @@ if (!fs.existsSync(ROOT)) {
 
 function findTestCommand() {
   if (TEST_CMD) return TEST_CMD;
-  const pkgPath = path.join(ROOT, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-      if (pkg.scripts && pkg.scripts.test) return pkg.scripts.test;
-    } catch (_) { /* ignore */ }
+
+  // ★修（2026-10-24）：从 ROOT 向上找 package.json，最多 5 级
+  //   原 bug：用户传 ./src，但 package.json 在项目根 ⇒ 找不到测试命令
+  let dir = ROOT;
+  for (let i = 0; i < 5; i++) {
+    const pkgPath = path.join(dir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg.scripts && pkg.scripts.test) {
+          // ★测试命令要在 package.json 所在目录跑，不是 ROOT
+          return { cmd: pkg.scripts.test, cwd: dir };
+        }
+      } catch (_) { /* ignore */ }
+    }
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
   }
+
   // 兜底：找 .test.js
   const hasTest = findFiles(ROOT, /\.test\.(c|m)?js$/).length > 0;
-  if (hasTest) return 'node --test';
+  if (hasTest) return { cmd: 'node --test', cwd: ROOT };
   return null;
 }
 
@@ -135,12 +150,14 @@ function findFiles(dir, re, out = []) {
 console.log('═══ AI 测试有效性检测（变异测试 MVP）═══');
 console.log('');
 
-const testCmd = findTestCommand();
-if (!testCmd) {
+const testInfo = findTestCommand();
+if (!testInfo) {
   console.error('❌ 找不到测试命令（没有 package.json 的 scripts.test，也没有 .test.js）');
   console.error('   ⇒ 用 --test-cmd="<你的测试命令>" 指定');
   process.exit(2);
 }
+const testCmd = testInfo.cmd;
+const testCwd = testInfo.cwd;   // ★测试命令在该目录跑
 
 console.log('  目录: ' + ROOT);
 console.log('  测试命令: ' + testCmd);
@@ -162,7 +179,7 @@ console.log('');
 console.log('  ── 基线检查 ──');
 let baselineOk = false;
 try {
-  execSync(testCmd, { cwd: ROOT, stdio: 'pipe', timeout: 120000, env: testEnv });
+  execSync(testCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
   baselineOk = true;
   console.log('  ✅ 基线测试通过（可以开始变异）');
 } catch (e) {
@@ -229,7 +246,7 @@ for (let i = 0; i < shuffled.length; i++) {
   const backup = c.src;
   try {
     fs.writeFileSync(c.file, mutated, 'utf8');
-    execSync(testCmd, { cwd: ROOT, stdio: 'pipe', timeout: 120000, env: testEnv });
+    execSync(testCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
     // 测试还绿 ⇒ 变异存活 ⇒ 测试没抓到
     survived++;
     survivors.push({ file: rel, kind: c.kind, line: c.src.slice(0, c.at).split('\n').length });
