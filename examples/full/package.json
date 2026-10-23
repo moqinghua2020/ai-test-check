@@ -1,0 +1,9 @@
+{
+  "name": "ai-test-check-example-full",
+  "version": "1.0.0",
+  "description": "Full example: 5 tests pass, but 39% effective",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "license": "MIT"
+}
