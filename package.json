@@ -1,7 +1,7 @@
 {
   "name": "ai-test-check",
-  "version": "0.1.0",
-  "description": "Prove your tests are real. Mutation testing for the AI-coding era.",
+  "version": "0.2.0",
+  "description": "Prove your tests are real. AST-based mutation testing for the AI-coding era.",
   "keywords": [
     "mutation-testing",
     "testing",
@@ -23,5 +23,8 @@
   },
   "scripts": {
     "test": "node bin/ai-test-check.cjs --help"
+  },
+  "dependencies": {
+    "acorn": "^8.19.0"
   }
 }
