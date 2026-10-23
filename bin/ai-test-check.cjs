@@ -170,6 +170,19 @@ if (process.argv.includes('--selftest')) {
     if (JSON.stringify(a) === JSON.stringify(b)) throw new Error('不同种子应该不同结果（概率上）');
   });
 
+  t('AST：算术运算符能变异', () => {
+    const r = buildCandidates('t.js', 'function f(a,b) { return a + b; }');
+    const arith = r.candidates.filter(x => x.kind.includes('+ → -'));
+    eq(arith.length, 1, '该有 1 个 + → -');
+  });
+
+  t('AST：算术运算符全 5 种', () => {
+    const code = 'function f(a,b) { return a + b - a * b / a % b; }';
+    const r = buildCandidates('t.js', code);
+    const arith = r.candidates.filter(x => /[+\-*/%] →/.test(x.kind));
+    if (arith.length < 5) throw new Error('该有 ≥5 个算术变异，实得 ' + arith.length);
+  });
+
   t('AST：条件取反能变异', () => {
     const r = buildCandidates('t.js', 'if (a >= 18) { x(); }');
     const neg = r.candidates.filter(x => x.kind.includes('条件取反'));
@@ -554,12 +567,14 @@ if (rate >= 80) {
 console.log('');
 console.log('═══ NOT_COVERED ═══');
 console.log('  · 只支持 JS/CJS（acorn AST，ES2022）');
-console.log('  · 变异类型：运算符（>=, <=, >, <, ===, !==, &&, ||）');
+console.log('  · 变异类型：比较运算符（>=, <=, >, <, ===, !==）');
+console.log('              + 逻辑运算符（&&, ||）');
+console.log('              + 算术运算符（+ - * / %）');
 console.log('              + 布尔字面量（true ↔ false）');
 console.log('              + 数字边界（N → N+1）');
 console.log('              + 状态字符串（active ↔ inactive 等）');
 console.log('              + 条件取反（if (x) → if (!(x))）');
-console.log('  · 不改返回值类型、不改算术运算符（+ - * /）');
+console.log('  · 不改返回值类型、不改对象属性访问');
 console.log('  · 解析失败的文件跳过（会报告，不静默）');
 console.log('  · 一次只变异一处，最多 ' + MAX_MUTANTS + ' 处');
 console.log('  · 变异可能造出语法错误 ⇒ 被当成"被杀"（方向保守，会高估有效性）');
