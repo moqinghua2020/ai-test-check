@@ -1,0 +1,27 @@
+{
+  "name": "ai-test-check",
+  "version": "0.1.0",
+  "description": "Prove your tests are real. Mutation testing for the AI-coding era.",
+  "keywords": [
+    "mutation-testing",
+    "testing",
+    "ai",
+    "code-quality",
+    "cli"
+  ],
+  "license": "MIT",
+  "bin": {
+    "ai-test-check": "./bin/ai-test-check.cjs"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node bin/ai-test-check.cjs --help"
+  }
+}

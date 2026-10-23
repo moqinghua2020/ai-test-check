@@ -1,0 +1,5 @@
+node_modules/
+*.log
+.DS_Store
+mutation-survey-result.json
+gh-mutation-result.json
