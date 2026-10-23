@@ -207,6 +207,20 @@ function findOperators(code) {
       }
     }
 
+    // ★条件取反（2026-10-24 加）
+    //   if (x) → if (!x)
+    //   ★为什么加：这是最常见的 bug 来源之一
+    //   实测：demo 项目里 if (total >= 100) 改成 if (!(total >= 100)) 测试抓不到
+    if ((node.type === 'IfStatement' || node.type === 'WhileStatement' || node.type === 'DoWhileStatement')
+        && node.test) {
+      ops.push({
+        op: '!',
+        start: node.test.start,
+        end: node.test.end,
+        condNegate: true,
+      });
+    }
+
     // 递归子节点
     for (const key of Object.keys(node)) {
       if (key === 'type' || key === 'start' || key === 'end') continue;
@@ -231,6 +245,21 @@ function buildCandidates(file, src) {
   const candidates = [];
 
   for (const op of ops) {
+    // ★条件取反（2026-10-24 加）
+    if (op.condNegate) {
+      const raw = src.slice(op.start, op.end);
+      const line = src.slice(0, op.start).split('\n').length;
+      // ★修 bug（2026-10-24 第 2 次）：start 插 "!("，end 插 ")"
+      //   第 1 次错在：只在 start 插 "!("，没在 end 插 ")"
+      //     ⇒ if (!(t >= 100) {   ← 缺一个 )
+      //   正确：if (!(t >= 100)) {   ← 两个 ) 一个给 "!("，一个给 if
+      candidates.push({
+        file, src, kind: '条件取反', op: '!', at: op.start, line,
+        apply: (s) => s.slice(0, op.start) + '!(' + s.slice(op.start, op.end) + ')' + s.slice(op.end),
+      });
+      continue;
+    }
+
     // ★字面量变异（2026-10-24 加）
     if (op.literalType) {
       const raw = src.slice(op.start, op.end);
