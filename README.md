@@ -84,6 +84,39 @@ ai-test-check ./src --file="src/*.js"      # 只测某些文件
 
 ---
 
+## 🧪 真实例子：5 个测试全绿，但有效性只有 14%
+
+`examples/calculator/` 里有一个**故意写弱**的测试项目：
+
+```bash
+cd examples/calculator
+node test.js
+# ✅ 5 个测试全部通过
+
+npx ai-test-check .
+# ★ 测试有效性: 14%
+```
+
+**测试全绿，但改坏代码不会红。**
+
+### 它漏了什么
+
+| 源码 | 测试 | 洞 |
+|---|---|---|
+| `discount(100)` 返回 90 | 只测了 `discount(200)` | **边界 100 没测** |
+| `canVote(18, true)` 返回 true | 只测了 `canVote(20, true)` | **边界 18 没测** |
+| `canVote(20, false)` 返回 false | 没测 | **非公民组合没测** |
+| `isWeekday(1)` / `isWeekday(5)` | 只测了 3 | **边界 1 和 5 没测** |
+| `isWeekday(0)` / `isWeekday(6)` | 没测 | **周末没测** |
+
+### 修复后
+
+给每个边界加测试，有效性从 **14% → 80%+**。
+
+**★ 这就是「覆盖率 100% 但测试无效」的具体样子。**
+
+---
+
 ## 在 CI 里用
 
 ```yaml
