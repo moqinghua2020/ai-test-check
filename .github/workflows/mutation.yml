@@ -1,0 +1,53 @@
+name: Test Effectiveness
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  mutation:
+    name: Check test effectiveness
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ★ 关键步骤：变异测试
+      # 退出码 0 = 有效性 >= 50%
+      # 退出码 1 = 有效性 < 50%（会卡 PR）
+      - name: Run mutation test
+        id: mutation
+        continue-on-error: true
+        run: npx ai-test-check ./src --max=20 | tee mutation-report.txt
+
+      - name: Show report
+        if: always()
+        run: cat mutation-report.txt
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: mutation-report.txt
+          retention-days: 7
+
+      # ★ 可选：有效性低于阈值就让 PR 失败
+      # 如果你还没准备好卡 PR，把下面这步注释掉
+      - name: Fail if effectiveness < 50%
+        if: steps.mutation.outcome == 'failure'
+        run: |
+          echo "::error::Test effectiveness is below 50%. Add more edge-case tests."
+          echo "See the mutation-report artifact for details."
+          exit 1
