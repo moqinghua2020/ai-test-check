@@ -165,7 +165,16 @@ console.log('  最多变异: ' + MAX_MUTANTS + ' 处');
 console.log('');
 
 // 找源文件（排除测试文件）
-const srcFiles = findFiles(ROOT, /\.(c|m)?js$/).filter((f) => !/\.test\.|\.spec\./.test(f));
+// ★修（2026-10-24）：排除测试文件本身
+//   原 bug：只排除 .test./.spec.，但 demo 的测试文件叫 test.js ⇒ 变异了测试自己
+//   修法：排除 test.js / tests.js / test/ / tests/ / __tests__/
+const srcFiles = findFiles(ROOT, /\.(c|m)?js$/).filter((f) => {
+  const rel = path.relative(ROOT, f).replace(/\\/g, '/');
+  if (/\.test\.|\.spec\./.test(rel)) return false;
+  if (/^(test|tests|__tests__)\//.test(rel)) return false;
+  if (/^(test|tests)\.(c|m)?js$/.test(rel)) return false;
+  return true;
+});
 
 if (srcFiles.length === 0) {
   console.error('❌ 没找到源文件（.js/.cjs/.mjs，排除 .test./.spec.）');
@@ -294,8 +303,11 @@ if (rate >= 80) {
 console.log('');
 console.log('═══ NOT_COVERED ═══');
 console.log('  · 只支持 JS/CJS（acorn AST，ES2022）');
-console.log('  · 只变异 8 类运算符（>=, <=, >, <, ===, !==, &&, ||）');
-console.log('  · 不改字面量/返回值/条件取反（只换运算符）');
+console.log('  · 变异类型：运算符（>=, <=, >, <, ===, !==, &&, ||）');
+console.log('              + 布尔字面量（true ↔ false）');
+console.log('              + 数字边界（N → N±1）');
+console.log('              + 状态字符串（active ↔ inactive 等）');
+console.log('  · 不改条件取反（if (x) → if (!x)）、不改返回值类型');
 console.log('  · 解析失败的文件跳过（会报告，不静默）');
 console.log('  · 一次只变异一处，最多 ' + MAX_MUTANTS + ' 处');
 console.log('  · 变异可能造出语法错误 ⇒ 被当成"被杀"（方向保守，会高估有效性）');
