@@ -63,6 +63,29 @@ const MUTATION_RULES = [
   { from: '||', to: '&&', name: '|| → &&' },
 ];
 
+// ── 字面量变异规则（2026-10-24 加）──────────────────────────────────
+// ★为什么加：运算符变异只能测「逻辑条件」，测不到「返回值/常量」
+//   实测：demo 项目里 discount(100) 返回 90，但只测了 200
+//   ⇒ 需要「数字边界变异」才能发现这类洞
+//
+// ★三类字面量变异：
+//   ① 布尔：true ↔ false
+//   ② 数字：N → N+1 / N-1（边界探测）
+//   ③ 字符串：'active' → 'inactive'（状态探测，只改常见状态词）
+const LITERAL_RULES = {
+  boolean: { name: 'true ↔ false' },
+  number: { name: 'N → N±1' },
+  string: { name: '状态字符串' },
+};
+
+// 常见的状态字符串对（可扩展）
+const STRING_PAIRS = [
+  ['active', 'inactive'], ['enabled', 'disabled'], ['success', 'failure'],
+  ['open', 'closed'], ['on', 'off'], ['yes', 'no'], ['valid', 'invalid'],
+  ['start', 'stop'], ['begin', 'end'], ['create', 'delete'], ['add', 'remove'],
+  ['GET', 'POST'], ['admin', 'user'], ['public', 'private'],
+];
+
 // ── 查找所有运算符节点 ────────────────────────────────────────────────
 /**
  * @param {string} code  源码
@@ -145,6 +168,45 @@ function findOperators(code) {
       });
     }
 
+    // ★字面量节点（2026-10-24 加）
+    if (node.type === 'Literal') {
+      // 布尔
+      if (typeof node.value === 'boolean') {
+        ops.push({
+          op: node.value ? 'true' : 'false',
+          start: node.start,
+          end: node.end,
+          literalType: 'boolean',
+          literalValue: node.value,
+        });
+      }
+      // 数字（排除 0 和 1，避免噪音）
+      else if (typeof node.value === 'number' && node.value !== 0 && node.value !== 1 && Number.isFinite(node.value)) {
+        ops.push({
+          op: String(node.value),
+          start: node.start,
+          end: node.end,
+          literalType: 'number',
+          literalValue: node.value,
+        });
+      }
+      // 字符串（只处理常见状态词）
+      else if (typeof node.value === 'string') {
+        const lower = node.value.toLowerCase();
+        const pair = STRING_PAIRS.find(([a, b]) => lower === a || lower === b);
+        if (pair) {
+          ops.push({
+            op: node.value,
+            start: node.start,
+            end: node.end,
+            literalType: 'string',
+            literalValue: node.value,
+            stringPair: pair,
+          });
+        }
+      }
+    }
+
     // 递归子节点
     for (const key of Object.keys(node)) {
       if (key === 'type' || key === 'start' || key === 'end') continue;
@@ -169,6 +231,40 @@ function buildCandidates(file, src) {
   const candidates = [];
 
   for (const op of ops) {
+    // ★字面量变异（2026-10-24 加）
+    if (op.literalType) {
+      const raw = src.slice(op.start, op.end);
+      const line = src.slice(0, op.start).split('\n').length;
+
+      if (op.literalType === 'boolean') {
+        const to = op.literalValue ? 'false' : 'true';
+        candidates.push({
+          file, src, kind: 'true ↔ false', op: op.op, at: op.start, line,
+          apply: (s) => s.slice(0, op.start) + to + s.slice(op.end),
+        });
+      } else if (op.literalType === 'number') {
+        // ★修（2026-10-24）：只做 +1，不做 -1
+        //   原因：-1 和 +1 等价（都是「改掉这个数字」），做两次是重复
+        //   实测：之前 N+1 和 N-1 各 3 个，稀释了运算符变异的占比
+        const to = String(op.literalValue + 1);
+        candidates.push({
+          file, src, kind: '数字边界', op: op.op, at: op.start, line,
+          apply: (s) => s.slice(0, op.start) + to + s.slice(op.end),
+        });
+      } else if (op.literalType === 'string') {
+        const [a, b] = op.stringPair;
+        const isA = op.literalValue.toLowerCase() === a;
+        const to = isA ? b : a;
+        // 保持原引号
+        const quote = raw[0] === '"' ? '"' : "'";
+        candidates.push({
+          file, src, kind: '状态字符串', op: op.op, at: op.start, line,
+          apply: (s) => s.slice(0, op.start) + quote + to + quote + s.slice(op.end),
+        });
+      }
+      continue;
+    }
+
     // 找这条运算符对应的变异规则
     const rule = MUTATION_RULES.find((r) => r.from === op.op);
     if (!rule) continue;
@@ -202,4 +298,4 @@ function buildCandidates(file, src) {
   return { candidates, parseError: null };
 }
 
-module.exports = { findOperators, buildCandidates, MUTATION_RULES };
+module.exports = { findOperators, buildCandidates, MUTATION_RULES, LITERAL_RULES };
