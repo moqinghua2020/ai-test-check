@@ -57,6 +57,7 @@ function printHelp() {
   console.log('选项:');
   console.log('  --test-cmd="<cmd>"  测试命令（默认读 package.json 的 scripts.test）');
   console.log('  --max=<n>           最多变异几处（默认 10）');
+  console.log('  ★变异类型: 运算符 / 布尔 / 数字边界 / 状态字符串 / 条件取反');
   console.log('  --all               跑所有变异点（结果稳定，但慢）');
   console.log('  --file=<glob>       只变异匹配的文件（默认 src 下所有 .js）');
   console.log('  --help              显示本帮助');
@@ -80,14 +81,15 @@ if (process.argv.includes('--selftest')) {
   console.log('');
 
   t('AST：真运算符能找到', () => {
-    // ★注意：18 也会被数字变异 ⇒ 实际 4 个（>= / && / !== / 数字边界）
+    // ★注意：现在是 5 个 —— >= / && / !== / 数字18 / 条件取反
     const r = buildCandidates('t.js', 'if (a >= 18 && b !== 0) {}');
-    eq(r.candidates.length, 4, '应有 4 个（>= && !== + 数字18）');
+    eq(r.candidates.length, 5, '应有 5 个（>= && !== + 数字18 + 条件取反）');
     const kinds = r.candidates.map(x => x.kind);
     if (!kinds.some(k => k.includes('>='))) throw new Error('缺 >=');
     if (!kinds.some(k => k.includes('&&'))) throw new Error('缺 &&');
     if (!kinds.some(k => k.includes('!=='))) throw new Error('缺 !==');
     if (!kinds.some(k => k.includes('数字'))) throw new Error('缺数字边界');
+    if (!kinds.some(k => k.includes('条件取反'))) throw new Error('缺条件取反');
   });
 
   t('AST：正则里的符号不算', () => {
@@ -168,6 +170,20 @@ if (process.argv.includes('--selftest')) {
     if (JSON.stringify(a) === JSON.stringify(b)) throw new Error('不同种子应该不同结果（概率上）');
   });
 
+  t('AST：条件取反能变异', () => {
+    const r = buildCandidates('t.js', 'if (a >= 18) { x(); }');
+    const neg = r.candidates.filter(x => x.kind.includes('条件取反'));
+    eq(neg.length, 1, '该有 1 个条件取反');
+  });
+
+  t('AST：条件取反不产生语法错误', () => {
+    const acorn = require('acorn');
+    const r = buildCandidates('t.js', 'if (a >= 18) { x(); }');
+    const neg = r.candidates.filter(x => x.kind.includes('条件取反'));
+    const mutated = neg[0].apply(neg[0].src);
+    acorn.parse(mutated, { ecmaVersion: 2022 });   // 不抛错就算通过
+  });
+
   t('分类：边界条件识别', () => {
     const r = buildCandidates('t.js', 'if (a >= 18) {}');
     const kinds = r.candidates.map(x => x.kind);
@@ -207,10 +223,17 @@ const ROOT = path.resolve(TARGET);
 
 // ★修（2026-10-23）：把 node_modules/.bin 加到 PATH
 //   原因：mocha/ava/xo 等只在 .bin 里，execSync 不自动找
-const BIN_DIR = path.join(ROOT, 'node_modules', '.bin');
+// ★修（2026-10-24）：同时注入 ROOT 和 testCwd 的 .bin
+//   实测：slugify 的 node_modules/ava 存在但 .bin 不生成（npm 在 Windows 的已知问题）
+//   ⇒ 需要 npx 兜底
+const BIN_DIRS = [
+  path.join(ROOT, 'node_modules', '.bin'),
+];
 const testEnv = {
   ...process.env,
-  PATH: fs.existsSync(BIN_DIR) ? BIN_DIR + path.delimiter + process.env.PATH : process.env.PATH,
+  PATH: BIN_DIRS.filter((d) => fs.existsSync(d)).join(path.delimiter) +
+        (BIN_DIRS.some((d) => fs.existsSync(d)) ? path.delimiter : '') +
+        process.env.PATH,
 };
 if (!fs.existsSync(ROOT)) {
   console.error('❌ 目录不存在: ' + ROOT);
@@ -229,8 +252,16 @@ function findTestCommand() {
       try {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
         if (pkg.scripts && pkg.scripts.test) {
-          // ★测试命令要在 package.json 所在目录跑，不是 ROOT
-          return { cmd: pkg.scripts.test, cwd: dir };
+          // ★修（2026-10-24）：拆开 &&，只跑真正的测试命令
+          //   实测：slugify 的 "xo && ava"，xo 没装 ⇒ 基线失败
+          const LINT_CMDS = ['xo', 'standard', 'eslint', 'tsc', 'prettier', 'nz'];
+          const parts = pkg.scripts.test.split('&&').map((s) => s.trim()).filter(Boolean);
+          const testParts = parts.filter((p) => {
+            const first = p.split(/\s+/)[0];
+            return !LINT_CMDS.includes(first);
+          });
+          const realTest = testParts.length > 0 ? testParts[0] : pkg.scripts.test;
+          return { cmd: realTest, cwd: dir, original: pkg.scripts.test };
         }
       } catch (_) { /* ignore */ }
     }
@@ -281,7 +312,12 @@ const testCmd = testInfo.cmd;
 const testCwd = testInfo.cwd;   // ★测试命令在该目录跑
 
 console.log('  目录: ' + ROOT);
-console.log('  测试命令: ' + testCmd);
+if (testInfo.original && testInfo.original !== testCmd) {
+  console.log('  原命令: ' + testInfo.original);
+  console.log('  ★ 只跑测试部分: ' + testCmd);
+} else {
+  console.log('  测试命令: ' + testCmd);
+}
 console.log('  最多变异: ' + MAX_MUTANTS + ' 处');
 console.log('');
 
@@ -309,7 +345,19 @@ console.log('');
 console.log('  ── 基线检查 ──');
 let baselineOk = false;
 try {
-  execSync(testCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
+  // ★修（2026-10-24）：如果命令找不到（.bin 不生成），用 npx 兜底
+  let finalCmd = testCmd;
+  const firstWord = testCmd.split(/\s+/)[0];
+  const cmdExists = (() => {
+    try {
+      execSync(process.platform === 'win32' ? 'where ' + firstWord : 'which ' + firstWord, { stdio: 'pipe', env: testEnv });
+      return true;
+    } catch (_) { return false; }
+  })();
+  if (!cmdExists) {
+    finalCmd = 'npx ' + testCmd;
+  }
+  execSync(finalCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
   baselineOk = true;
   console.log('  ✅ 基线测试通过（可以开始变异）');
 } catch (e) {
@@ -395,7 +443,19 @@ for (let i = 0; i < shuffled.length; i++) {
   const backup = c.src;
   try {
     fs.writeFileSync(c.file, mutated, 'utf8');
-    execSync(testCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
+    // ★修（2026-10-24）：如果命令找不到（.bin 不生成），用 npx 兜底
+  let finalCmd = testCmd;
+  const firstWord = testCmd.split(/\s+/)[0];
+  const cmdExists = (() => {
+    try {
+      execSync(process.platform === 'win32' ? 'where ' + firstWord : 'which ' + firstWord, { stdio: 'pipe', env: testEnv });
+      return true;
+    } catch (_) { return false; }
+  })();
+  if (!cmdExists) {
+    finalCmd = 'npx ' + testCmd;
+  }
+  execSync(finalCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
     // 测试还绿 ⇒ 变异存活 ⇒ 测试没抓到
     survived++;
     survivors.push({ file: rel, kind: c.kind, line: c.src.slice(0, c.at).split('\n').length, op: c.op });
@@ -480,9 +540,10 @@ console.log('═══ NOT_COVERED ═══');
 console.log('  · 只支持 JS/CJS（acorn AST，ES2022）');
 console.log('  · 变异类型：运算符（>=, <=, >, <, ===, !==, &&, ||）');
 console.log('              + 布尔字面量（true ↔ false）');
-console.log('              + 数字边界（N → N±1）');
+console.log('              + 数字边界（N → N+1）');
 console.log('              + 状态字符串（active ↔ inactive 等）');
-console.log('  · 不改条件取反（if (x) → if (!x)）、不改返回值类型');
+console.log('              + 条件取反（if (x) → if (!(x))）');
+console.log('  · 不改返回值类型、不改算术运算符（+ - * /）');
 console.log('  · 解析失败的文件跳过（会报告，不静默）');
 console.log('  · 一次只变异一处，最多 ' + MAX_MUTANTS + ' 处');
 console.log('  · 变异可能造出语法错误 ⇒ 被当成"被杀"（方向保守，会高估有效性）');
