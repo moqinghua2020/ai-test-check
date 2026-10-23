@@ -1,0 +1,9 @@
+{
+  "name": "ai-test-check-example",
+  "version": "1.0.0",
+  "description": "Example project showing weak tests that pass but miss bugs",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "license": "MIT"
+}
