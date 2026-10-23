@@ -5,9 +5,11 @@
   "keywords": [
     "mutation-testing",
     "testing",
+    "test-quality",
     "ai",
     "code-quality",
-    "cli"
+    "cli",
+    "javascript"
   ],
   "license": "MIT",
   "bin": {
@@ -26,5 +28,14 @@
   },
   "dependencies": {
     "acorn": "^8.19.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moqinghua2020/ai-test-check.git"
+  },
+  "homepage": "https://github.com/moqinghua2020/ai-test-check#readme",
+  "bugs": {
+    "url": "https://github.com/moqinghua2020/ai-test-check/issues"
+  },
+  "author": "moqinghua"
 }
