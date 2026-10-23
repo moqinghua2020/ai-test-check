@@ -258,7 +258,7 @@ for (let i = 0; i < shuffled.length; i++) {
     execSync(testCmd, { cwd: testCwd, stdio: 'pipe', timeout: 120000, env: testEnv });
     // 测试还绿 ⇒ 变异存活 ⇒ 测试没抓到
     survived++;
-    survivors.push({ file: rel, kind: c.kind, line: c.src.slice(0, c.at).split('\n').length });
+    survivors.push({ file: rel, kind: c.kind, line: c.src.slice(0, c.at).split('\n').length, op: c.op });
     console.log('  [' + (i + 1) + '/' + shuffled.length + '] ' + rel + '  ' + c.kind + '  ❌ 存活（测试没抓到）');
   } catch (e) {
     // 测试变红 ⇒ 变异被杀 ⇒ 测试有效
@@ -283,10 +283,45 @@ console.log('');
 console.log('  ★ 测试有效性: ' + rate + '%');
 console.log('');
 
+// ★按类型分组报告（2026-10-24 加）
+//   ★为什么加：只报「有效性 25%」不够具体
+//   用户需要知道「哪类测试没写」——边界？逻辑？状态？
+function classifyKind(kind) {
+  if (kind.includes('→') && /[<>=!]/.test(kind)) return '边界条件';
+  if (kind.includes('&&') || kind.includes('||')) return '逻辑组合';
+  if (kind.includes('true') || kind.includes('false')) return '布尔判断';
+  if (kind.includes('数字')) return '数字边界';
+  if (kind.includes('状态')) return '状态判断';
+  return '其他';
+}
+
+// 给每个存活变异打分类
+for (const s of survivors) s.category = classifyKind(s.kind);
+
 if (survivors.length > 0) {
-  console.log('  存活的变异（这些地方测试有洞）:');
-  for (const s of survivors.slice(0, 10)) {
-    console.log('    ' + s.file + ':' + s.line + '  ' + s.kind);
+  // ── 按类型汇总 ──
+  const byCat = {};
+  for (const s of survivors) {
+    if (!byCat[s.category]) byCat[s.category] = [];
+    byCat[s.category].push(s);
+  }
+
+  console.log('  存活的变异按类型分组:');
+  console.log('');
+  const CAT_HINT = {
+    '边界条件': '补「等于/不等于」的情况',
+    '逻辑组合': '补「只满足一个条件」的情况',
+    '布尔判断': '补「相反情况」的测试',
+    '数字边界': '补「刚好等于/差一」的情况',
+    '状态判断': '补「状态切换」的测试',
+    '其他': '看具体位置',
+  };
+  for (const [cat, arr] of Object.entries(byCat).sort((a, b) => b[1].length - a[1].length)) {
+    console.log('    ' + cat + '（' + arr.length + ' 处）⇒ ' + (CAT_HINT[cat] || ''));
+    for (const s of arr.slice(0, 3)) {
+      console.log('      ' + s.file + ':' + s.line + '  ' + s.kind);
+    }
+    if (arr.length > 3) console.log('      ...还有 ' + (arr.length - 3) + ' 处');
   }
   console.log('');
 }
