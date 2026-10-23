@@ -57,6 +57,7 @@ function printHelp() {
   console.log('选项:');
   console.log('  --test-cmd="<cmd>"  测试命令（默认读 package.json 的 scripts.test）');
   console.log('  --max=<n>           最多变异几处（默认 10）');
+  console.log('  --all               跑所有变异点（结果稳定，但慢）');
   console.log('  --file=<glob>       只变异匹配的文件（默认 src 下所有 .js）');
   console.log('  --help              显示本帮助');
   console.log('');
@@ -128,6 +129,45 @@ if (process.argv.includes('--selftest')) {
     eq(nums.length, 0);
   });
 
+  t('可复现：同种子同结果', () => {
+    // 直接测 seededShuffle 逻辑
+    function seededShuffle(arr, seed) {
+      let s = 0;
+      for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) | 0;
+      s = Math.abs(s) || 1;
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        s = (s * 1103515245 + 12345) & 0x7fffffff;
+        const j = s % (i + 1);
+        const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+      }
+      return a;
+    }
+    const arr = [1,2,3,4,5,6,7,8,9,10];
+    const a = seededShuffle(arr, '/path/to/project');
+    const b = seededShuffle(arr, '/path/to/project');
+    eq(JSON.stringify(a), JSON.stringify(b), '同种子应同结果');
+  });
+
+  t('可复现：不同种子不同结果', () => {
+    function seededShuffle(arr, seed) {
+      let s = 0;
+      for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) | 0;
+      s = Math.abs(s) || 1;
+      const a = arr.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        s = (s * 1103515245 + 12345) & 0x7fffffff;
+        const j = s % (i + 1);
+        const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+      }
+      return a;
+    }
+    const arr = [1,2,3,4,5,6,7,8,9,10];
+    const a = seededShuffle(arr, '/path/A');
+    const b = seededShuffle(arr, '/path/B');
+    if (JSON.stringify(a) === JSON.stringify(b)) throw new Error('不同种子应该不同结果（概率上）');
+  });
+
   t('分类：边界条件识别', () => {
     const r = buildCandidates('t.js', 'if (a >= 18) {}');
     const kinds = r.candidates.map(x => x.kind);
@@ -157,7 +197,9 @@ function getArg(name, def) {
   return a ? a.slice(name.length + 3) : def;
 }
 
-const MAX_MUTANTS = Number(getArg('max', '10')) || 10;
+// ★修（2026-10-24）：--all 跑全量
+const RUN_ALL = process.argv.includes('--all');
+const MAX_MUTANTS = RUN_ALL ? Infinity : (Number(getArg('max', '10')) || 10);
 const TEST_CMD = getArg('test-cmd', null);
 
 // ── 找源码和测试命令 ──────────────────────────────────────────────────
@@ -299,10 +341,29 @@ if (candidates.length === 0) {
   process.exit(0);
 }
 
-// 洗牌 + 截断
-const shuffled = candidates.slice().sort(() => Math.random() - 0.5).slice(0, MAX_MUTANTS);
+// ★修（2026-10-24）：可复现的随机抽样
+//   原 bug：sort(() => Math.random() - 0.5) 每次不同
+//   实测：同一项目两次跑出 20% 和 100%，用户不会信任
+//   修法：用项目路径做种子，同一项目每次抽同样的变异
+function seededShuffle(arr, seed) {
+  let s = 0;
+  for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) | 0;
+  s = Math.abs(s) || 1;
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const j = s % (i + 1);
+    const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
 
-console.log('  可变异点: ' + candidates.length + ' 个，本次抽 ' + shuffled.length + ' 个');
+const shuffled = seededShuffle(candidates, ROOT).slice(0, MAX_MUTANTS);
+
+// ★修（2026-10-24）：说明是全量还是抽样
+const isFull = shuffled.length === candidates.length;
+console.log('  可变异点: ' + candidates.length + ' 个，本次抽 ' + shuffled.length + ' 个' +
+  (isFull ? '（全量 ✅ 结果稳定）' : '（抽样 ' + Math.round(shuffled.length / candidates.length * 100) + '%，结果可能波动）'));
 
 // ★报告解析失败的文件（AST 解析不了 ⇒ 跳过，但不静默）
 if (parseErrors.length > 0) {
