@@ -17,7 +17,7 @@
  *
  * ★它怎么工作★
  *
- *   1. 找到源码里的「可变异点」（比较运算符、布尔值、逻辑运算符）
+ *   1. 找到源码里的「可变异点」（★用 AST 精确识别真运算符）
  *   2. 逐个改坏
  *   3. 跑测试
  *   4. 测试还绿 ⇒ 这个变异"存活" ⇒ 测试没抓到 ⇒ 记一笔
@@ -28,8 +28,8 @@
  *
  * ★诚实边界（MVP 限制）★
  *
- *   · 只支持 JS/CJS（不做 AST，纯文本替换）
- *   · 只变异 6 类简单点（===, !==, >, <, &&, ||）
+ *   · 只支持 JS/CJS（用 acorn 做 AST，ES2022 语法）
+ *   · 只变异 8 类运算符（>=, <=, >, <, ===, !==, &&, ||）
  *   · 一次只变异一处（慢但准）
  *   · 不改测试文件，只改源码
  *   · 不保证语义等价（可能造出语法错误 ⇒ 当成"被杀"是误判，但方向保守）
@@ -43,6 +43,9 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+
+// ★AST 变异器（2026-10-23 加）：用语法树找真运算符，不再纯正则
+const { buildCandidates } = require('./ast-mutator.cjs');
 
 // ── 参数 ──────────────────────────────────────────────────────────────
 function printHelp() {
@@ -121,23 +124,12 @@ function findFiles(dir, re, out = []) {
   return out;
 }
 
-// ── 变异点 ────────────────────────────────────────────────────────────
-// 每条：{ name, find, replace }
-// ★保守策略：只变异"一定有语义"的符号，且一次只改一处
-const MUTATIONS = [
-  { name: '=== → !==', find: '===', replace: '!==' },
-  { name: '!== → ===', find: '!==', replace: '===' },
-  { name: '&& → ||', find: '&&', replace: '||' },
-  { name: '|| → &&', find: '||', replace: '&&' },
-];
-
-// 比较运算符要避开 >=, <=, =>, ===, !==
-const COMPARE_MUTATIONS = [
-  { name: '> → >=', re: /(?<![<>=!])>(?![=>])/g, to: '>=' },
-  { name: '< → <=', re: /(?<![<>=!])<(?![=<])/g, to: '<=' },
-  { name: '>= → >', re: /(?<![<>=!])>=(?!=)/g, to: '>' },
-  { name: '<= → <', re: /(?<![<>=!])<=(?!=)/g, to: '<' },
-];
+// ── 变异点（★已改用 AST，见 ast-mutator.cjs）────────────────────────
+// 旧版纯正则会误报：
+//   /(?!=)/g  ⇒ 把正则 lookahead 当成「!= 比较」
+//   /(?![=>])/g ⇒ 把正则 lookahead 当成「嵌套三元」
+// 实测（2026-10-23）：用 ocr 规则扫自己代码，10 项检查 2 项误报
+// ⇒ 改用 acorn 解析成 AST，只变异真正的运算符节点
 
 // ── 主流程 ────────────────────────────────────────────────────────────
 console.log('═══ AI 测试有效性检测（变异测试 MVP）═══');
@@ -183,26 +175,17 @@ try {
   process.exit(1);
 }
 
-// 收集所有变异点
+// 收集所有变异点（★用 AST 精确识别，排除正则/字符串/注释里的假符号）
 const candidates = [];
+const parseErrors = [];
 for (const file of srcFiles) {
   const src = fs.readFileSync(file, 'utf8');
-  for (const m of MUTATIONS) {
-    let idx = -1;
-    while ((idx = src.indexOf(m.find, idx + 1)) !== -1) {
-      candidates.push({ file, src, kind: m.name, at: idx, apply: (s) => s.slice(0, idx) + m.replace + s.slice(idx + m.find.length) });
-    }
+  const result = buildCandidates(file, src);
+  if (result.parseError) {
+    parseErrors.push({ file: path.relative(ROOT, file), error: result.parseError });
+    continue;
   }
-  for (const m of COMPARE_MUTATIONS) {
-    m.re.lastIndex = 0;
-    let match;
-    while ((match = m.re.exec(src)) !== null) {
-      const at = match.index;
-      const len = match[0].length;      // ★捕获当次长度（闭包会变）
-      const to = m.to;
-      candidates.push({ file, src, kind: m.name, at, apply: (s) => s.slice(0, at) + to + s.slice(at + len) });
-    }
-  }
+  candidates.push(...result.candidates);
 }
 
 if (candidates.length === 0) {
@@ -215,6 +198,16 @@ if (candidates.length === 0) {
 const shuffled = candidates.slice().sort(() => Math.random() - 0.5).slice(0, MAX_MUTANTS);
 
 console.log('  可变异点: ' + candidates.length + ' 个，本次抽 ' + shuffled.length + ' 个');
+
+// ★报告解析失败的文件（AST 解析不了 ⇒ 跳过，但不静默）
+if (parseErrors.length > 0) {
+  console.log('');
+  console.log('  ⚠ ' + parseErrors.length + ' 个文件解析失败（已跳过）:');
+  for (const pe of parseErrors.slice(0, 5)) {
+    console.log('    ' + pe.file + ': ' + pe.error.slice(0, 80));
+  }
+  if (parseErrors.length > 5) console.log('    ...还有 ' + (parseErrors.length - 5) + ' 个');
+}
 console.log('');
 console.log('  ── 逐个变异 ──');
 
@@ -283,10 +276,13 @@ if (rate >= 80) {
 
 console.log('');
 console.log('═══ NOT_COVERED ═══');
-console.log('  · 只支持 JS/CJS，不做 AST（纯文本替换）');
-console.log('  · 只变异 6 类简单点（===, !==, >, <, &&, ||）');
+console.log('  · 只支持 JS/CJS（acorn AST，ES2022）');
+console.log('  · 只变异 8 类运算符（>=, <=, >, <, ===, !==, &&, ||）');
+console.log('  · 不改字面量/返回值/条件取反（只换运算符）');
+console.log('  · 解析失败的文件跳过（会报告，不静默）');
 console.log('  · 一次只变异一处，最多 ' + MAX_MUTANTS + ' 处');
 console.log('  · 变异可能造出语法错误 ⇒ 被当成"被杀"（方向保守，会高估有效性）');
+console.log('  · 只做单文件变异，无跨文件/模块间契约检测');
 console.log('  · 不测"边界值"、"异常路径"这类变异');
 
 process.exit(rate >= 50 ? 0 : 1);
