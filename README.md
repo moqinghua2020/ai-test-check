@@ -1,5 +1,10 @@
 # ai-test-check
 
+[![npm version](https://img.shields.io/npm/v/ai-test-check.svg)](https://www.npmjs.com/package/ai-test-check)
+[![npm downloads](https://img.shields.io/npm/dm/ai-test-check.svg)](https://www.npmjs.com/package/ai-test-check)
+[![license](https://img.shields.io/npm/l/ai-test-check.svg)](https://github.com/moqinghua2020/ai-test-check/blob/main/LICENSE)
+[![node](https://img.shields.io/node/v/ai-test-check.svg)](https://www.npmjs.com/package/ai-test-check)
+
 > **你的测试，是真的吗？**
 >
 > AI 写的测试经常「假绿」：100% 通过，但改坏代码还是绿。
@@ -10,6 +15,23 @@ npx ai-test-check ./src
 ```
 
 **30 秒后你会知道**：你改坏 10 处代码，测试能抓到几处。
+
+## 安装
+
+```bash
+# 方式 1：直接用（不用安装）
+npx ai-test-check ./src
+
+# 方式 2：全局安装
+npm install -g ai-test-check
+ai-test-check ./src
+
+# 方式 3：项目内安装（推荐 CI 用）
+npm install --save-dev ai-test-check
+npx ai-test-check ./src
+```
+
+**要求**：Node.js >= 18
 
 ---
 
@@ -352,7 +374,7 @@ if (node.type === 'BinaryExpression') {
 
 | 版本 | 日期 | 改动 |
 |---|---|---|
-| **v0.2.9** | 2026-10-24 | 新增 **算术运算符变异**（`+ - * / %`），运算符从 8 种 → 13 种；自检 14 → 16 |
+| **v0.2.9** | 2026-10-24 | ★**首次发布到 npm**（`npm install -g ai-test-check`）；新增 **算术运算符变异**（`+ - * / %`），运算符从 8 种 → 13 种；自检 14 → 16 |
 | **v0.2.8** | 2026-10-24 | ★加 **修复前后对比**（`examples/full/BEFORE-AFTER.md`）：同一项目只改测试，有效性 **39% → 100%**；修 2 个 bug（`--test-cmd` 返回类型 / 测试文件被变异） |
 | **v0.2.7** | 2026-10-24 | 加 `examples/full/`（覆盖全部 5 种变异类型，5 个测试全绿但有效性 39%）；修 bug：找不到命令时用 npx 兜底 |
 | **v0.2.6** | 2026-10-24 | 新增 **条件取反**（`if (x)` → `if (!(x))`）；修 bug：`xo && ava` 这类命令会拆开只跑测试部分 |
